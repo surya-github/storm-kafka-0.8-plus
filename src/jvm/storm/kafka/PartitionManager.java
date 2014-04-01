@@ -18,6 +18,15 @@ import storm.kafka.KafkaSpout.EmitState;
 import storm.kafka.KafkaSpout.MessageAndRealOffset;
 import storm.kafka.trident.MaxMetric;
 
+//added for spout topic metrics
+import java.util.concurrent.TimeUnit;
+import com.yammer.metrics.Metrics;
+import com.yammer.metrics.core.Counter;
+import com.yammer.metrics.core.Meter;
+import com.yammer.metrics.core.Timer;
+//--------------
+
+
 import java.util.*;
 
 public class PartitionManager {
@@ -26,7 +35,10 @@ public class PartitionManager {
     private final ReducedMetric _fetchAPILatencyMean;
     private final CountMetric _fetchAPICallCount;
     private final CountMetric _fetchAPIMessageCount;
-
+    //added for spout topic metrics
+	private final Meter allMessagesRate= Metrics.newMeter(PartitionManager.class, "Processed-Tuples", "Tuple Process Rate", TimeUnit.SECONDS);;
+	private final Meter topicMessagesRate;
+	//--------------
     static class KafkaMessageId {
         public Partition partition;
         public long offset;
@@ -51,7 +63,10 @@ public class PartitionManager {
 
 
     public PartitionManager(DynamicPartitionConnections connections, String topologyInstanceId, ZkState state, Map stormConf, SpoutConfig spoutConfig, Partition id) {
-        _partition = id;
+    	//added for spout topic metrics
+    	topicMessagesRate= Metrics.newMeter(PartitionManager.class, "ProcessedTuplePerTopicPerPartitionID_"+spoutConfig.topic+"_"+id, "Tuple Process Rate", TimeUnit.SECONDS);
+    	//--------------
+    	_partition = id;
         _connections = connections;
         _spoutConfig = spoutConfig;
         _topologyInstanceId = topologyInstanceId;
@@ -68,6 +83,10 @@ public class PartitionManager {
             if (json != null) {
                 jsonTopologyId = (String) ((Map<Object, Object>) json.get("topology")).get("id");
                 jsonOffset = (Long) json.get("offset");
+                //added for spout topic metrics
+                // this updates the count of processed records after the spout restart
+                updateMetrics(jsonOffset);
+                //------
             }
         } catch (Throwable e) {
             LOG.warn("Error reading and/or parsing at ZkNode: " + path, e);
@@ -102,6 +121,12 @@ public class PartitionManager {
         return ret;
     }
 
+    //added for spout topic metrics
+    private void updateMetrics(long i){
+    	allMessagesRate.mark(i);
+    	topicMessagesRate.mark(i);
+    }
+    //-------
     //returns false if it's reached the end of current batch
     public EmitState next(SpoutOutputCollector collector) {
         if (_waitingToEmit.isEmpty()) {
@@ -116,6 +141,9 @@ public class PartitionManager {
             if (tups != null) {
                 for (List<Object> tup : tups) {
                     collector.emit(tup, new KafkaMessageId(_partition, toEmit.offset));
+                    //added for spout topic metrics
+                    updateMetrics(1);
+                    //-------
                 }
                 break;
             } else {
